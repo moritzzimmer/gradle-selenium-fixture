@@ -1,0 +1,166 @@
+apply plugin: 'war'
+apply plugin: 'eclipse-wtp'
+apply plugin: 'idea'
+apply plugin: 'tomcat'
+
+sourceCompatibility = 1.7
+targetCompatibility = 1.7
+
+version = 0.1
+
+buildscript {
+	repositories {
+		add(new org.apache.ivy.plugins.resolver.URLResolver()) {
+			name = 'GitHub'
+			addArtifactPattern 'http://cloud.github.com/downloads/[organisation]/[module]/[module]-[revision].[ext]'
+		}
+	}
+	dependencies { classpath "bmuschko:gradle-tomcat-plugin:$tomcatPluginVersion" }
+}
+
+repositories { mavenCentral() }
+
+configurations {
+	// JaCoCo is a free code coverage library for Java, see http://www.eclemma.org/jacoco/
+	jacoco
+}
+
+sourceSets {
+	integrationTest {
+		java.srcDir file('src/integrationTest/java')
+		resources.srcDir file('src/integrationTest/resources')
+	}
+}
+
+dependencies {
+	testCompile (
+		"junit:junit:$junitVersion"
+	)
+	
+	integrationTestCompile sourceSets.main.output
+	integrationTestCompile configurations.testCompile
+	integrationTestCompile sourceSets.test.output
+	integrationTestCompile (
+		"org.seleniumhq.selenium.fluent:fluent-selenium:$fluentSeleniumVersion",
+		"org.fluentlenium:fluentlenium-festassert:$festassertVersion"
+	)
+	
+	integrationTestRuntime configurations.testRuntime
+	
+	tomcat (
+		"org.apache.tomcat.embed:tomcat-embed-core:$tomcatVersion",
+		"org.apache.tomcat.embed:tomcat-embed-logging-juli:$tomcatVersion",
+		"org.apache.tomcat:dbcp:6.0.35",
+		fileTree(dir: 'lib', includes: ['ojdbc14.jar'])
+	)
+	tomcat("org.apache.tomcat.embed:tomcat-embed-jasper:$tomcatVersion") {
+		exclude group: 'org.eclipse.jdt.core.compiler', module: 'ecj'
+	}
+	
+	jacoco group: "org.jacoco", name: "org.jacoco.agent", version: "$jacocoVersion", classifier: "runtime"
+}
+
+// set source file encoding for all compile tasks
+tasks.withType(Compile) {
+  options.encoding = 'UTF-8'
+}
+
+// specify resources which should not be part of the final artifact here
+processResources {
+	exclude '**/rebel.xml'
+}
+
+war {
+	archiveName = "foo.$extension"
+	manifest {
+		attributes 'Implementation-Title': title, 'Implementation-Vendor': vendor, 'Implementation-Version': version
+	}
+}
+  
+test {
+	// use JaCoCo agent to record execution coverage data
+	jvmArgs "-javaagent:$configurations.jacoco.asPath=destfile=$buildDir/jacoco.exec"
+	
+	// enable parallel test execution
+	maxParallelForks = 5
+	forkEvery = 5
+	
+	// makes the standard streams (err and out) visible at console when running tests
+	testLogging.showStandardStreams = true
+}
+
+// configure tomcat plugin
+[tomcatRun, tomcatRunWar, tomcatStop]*.contextPath = 'foo'
+[tomcatRun, tomcatRunWar, tomcatStop]*.outputFile = project.file("$buildDir/tomcat.log")
+[tomcatRun, tomcatRunWar, tomcatStop]*.compilerSourceVM = 1.7
+[tomcatRun, tomcatRunWar, tomcatStop]*.compilerTargetVM = 1.7
+[tomcatRun, tomcatRunWar, tomcatStop]*.httpPort = 8081
+[tomcatRun, tomcatRunWar, tomcatStop]*.stopPort = 8082
+[tomcatRun, tomcatRunWar, tomcatStop]*.httpsPort = 8444
+[tomcatRun, tomcatRunWar, tomcatStop]*.stopKey = 'stopKey'
+
+
+task integrationTest(type: Test, dependsOn: jar, description: 'Runs the integration tests.', group: 'verification') {
+  testClassesDir = sourceSets.integrationTest.output.classesDir
+  classpath = sourceSets.integrationTest.runtimeClasspath
+  systemProperties['jar.path'] = jar.archivePath
+  
+  // use JaCoCo agent to record execution coverage data
+  jvmArgs "-javaagent:$configurations.jacoco.asPath=destfile=$buildDir/jacoco-int.exec"
+}
+check.dependsOn integrationTest
+
+integrationTest.doFirst {
+  println 'Starting the embedded tomcat server'
+  tasks.tomcatRun.daemon = true
+  tasks.tomcatRun.execute()
+}
+
+integrationTest.doLast {
+  println 'Stopping the embedded tomcat server'
+  tasks.tomcatStop.execute()
+}
+
+task initializeSourceFolders(description: 'Creates source and resource folders for all configured source sets.', group: 'Initialization') << {
+	def sources = [
+	  sourceSets.main,
+	  sourceSets.test,
+	  sourceSets.integrationTest
+	]
+	sources*.allSource*.srcDirs.flatten().each { File srcDir ->
+	  println "creating source folder: $srcDir"
+	  srcDir.mkdirs()
+	}
+}
+
+eclipse {
+	// see file 'org.eclipse.wst.common.component'
+	wtp {
+	  component {
+		contextPath = 'foo'
+	  }
+	}
+	
+	// see file '.project'
+	project {
+		file {
+			// add checkstyle and jrebel build commands and natures
+			buildCommand 'net.sf.eclipsecs.core.CheckstyleBuilder'
+			buildCommand 'org.zeroturnaround.eclipse.rebelXmlBuilder'
+		  
+			beforeMerged { project ->
+				project.natures.addAll(['net.sf.eclipsecs.core.CheckstyleNature', 'org.zeroturnaround.eclipse.jrebelNature'])
+			}
+		}
+	}
+  
+	// see file '.classpath'
+	classpath {
+	  // workaround to include dependencies from custom configurations, see http://issues.gradle.org/browse/GRADLE-1302
+	  plusConfigurations += configurations.integrationTestRuntime
+	  
+	  downloadJavadoc = true
+	}
+}
+
+task wrapper(type: Wrapper, description: 'Creates the gradle wrapper.') { gradleVersion = "1.0" }
