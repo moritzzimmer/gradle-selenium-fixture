@@ -21,3 +21,19 @@ To run the integration tests, execute the following task:
 
 	gradle integrationTest
  
+This will start an embedded tomcat server, execute all integration tests and shutdown the server:
+
+	integrationTest.doFirst {
+  		println 'Starting the embedded tomcat server'
+  		tasks.tomcatRun.daemon = true
+  		tasks.tomcatRun.execute()
+	}
+
+	integrationTest.doLast {
+  		println 'Stopping the embedded tomcat server'
+  		tasks.tomcatStop.execute()
+	}
+	
+The 'integrationTest' task has a dependency to 'check' so you can also execute:
+
+	gradle check
