@@ -18,5 +18,5 @@ Gradle 1.0+ (wrapper is included)
 ## Usage
 
 To run the integration tests, execute the following task:
-	./gradlew integrationTest
+	gradle integrationTest
  
